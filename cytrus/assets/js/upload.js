@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         var xhr = new XMLHttpRequest();
         xhr.open('POST', form.action, true);
+        xhr.timeout = 0; // let large uploads run as long as needed, don't let the browser time out on its own
 
         progressWrap.hidden = false;
         progressBar.style.width = '0%';
@@ -37,12 +38,33 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         xhr.addEventListener('load', function () {
-            // Server replies with a redirect to the files view; follow it to show flash messages.
-            window.location.href = xhr.responseURL || form.action;
+            if (xhr.status >= 200 && xhr.status < 400) {
+                // Server replies with a redirect to the files view; follow it to show flash messages.
+                window.location.href = xhr.responseURL || form.action;
+                return;
+            }
+            progressLabel.textContent = 'Serwer odrzucił plik (HTTP ' + xhr.status + '). Sprawdź limity PHP/serwera.';
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
         });
 
         xhr.addEventListener('error', function () {
-            progressLabel.textContent = 'Błąd przesyłania. Spróbuj ponownie.';
+            progressLabel.textContent = 'Błąd sieci podczas przesyłania. Spróbuj ponownie.';
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+        });
+
+        xhr.addEventListener('abort', function () {
+            progressLabel.textContent = 'Przesyłanie przerwane.';
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+        });
+
+        xhr.addEventListener('timeout', function () {
+            progressLabel.textContent = 'Przekroczono czas oczekiwania serwera.';
             if (submitButton) {
                 submitButton.disabled = false;
             }
