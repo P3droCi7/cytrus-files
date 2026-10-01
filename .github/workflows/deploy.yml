@@ -40,7 +40,7 @@ jobs:
 
       - name: Sync files (never touches ftp/ or data/)
         run: |
-          rsync -az --delete \
+          rsync -az --delete --omit-dir-times --omit-link-times \
             --exclude 'ftp/' \
             --exclude 'data/' \
             -e "ssh -p ${{ secrets.DEPLOY_PORT }}" \
