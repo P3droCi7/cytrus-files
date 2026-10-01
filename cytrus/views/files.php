@@ -8,6 +8,7 @@ use function App\e;
 /** @var array $entries */
 /** @var string $currentDir */
 /** @var array $breadcrumbs */
+/** @var array|null $diskUsage */
 ?>
 <h1>Pliki</h1>
 
@@ -17,6 +18,22 @@ use function App\e;
     <a href="index.php?<?= http_build_query(['p' => 'files', 'dir' => $crumb['path']]) ?>"><?= e($crumb['name']) ?></a>
 <?php endforeach; ?>
 </nav>
+
+<section class="disk-usage" aria-label="Zajętość dysku">
+    <?php if ($diskUsage !== null): ?>
+        <div class="disk-usage-heading">
+            <strong>Zajętość dysku serwera</strong>
+            <span><?= e((string) $diskUsage['percent']) ?>%</span>
+        </div>
+        <div class="disk-usage-track" role="meter" aria-label="Zajętość dysku serwera" aria-valuemin="0" aria-valuemax="100" aria-valuenow="<?= e((string) $diskUsage['percent']) ?>" aria-valuetext="<?= e(FileManager::humanSize($diskUsage['used'])) ?> z <?= e(FileManager::humanSize($diskUsage['total'])) ?> zajęte">
+            <div class="disk-usage-fill" style="width: <?= e((string) $diskUsage['percent']) ?>%"></div>
+        </div>
+        <p><?= e(FileManager::humanSize($diskUsage['used'])) ?> zajęte z <?= e(FileManager::humanSize($diskUsage['total'])) ?> · <?= e(FileManager::humanSize($diskUsage['free'])) ?> wolne</p>
+    <?php else: ?>
+        <strong>Zajętość dysku serwera</strong>
+        <p>Informacja o pojemności dysku jest niedostępna.</p>
+    <?php endif; ?>
+</section>
 
 <?php if (Auth::can('upload')): ?>
 <section class="panel">

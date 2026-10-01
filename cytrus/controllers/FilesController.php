@@ -31,6 +31,7 @@ final class FilesController
             'entries'     => $entries,
             'currentDir'  => $dir,
             'breadcrumbs' => self::breadcrumbs($dir),
+            'diskUsage'   => FileManager::diskUsage(),
             'user'        => Auth::user(),
         ]);
     }

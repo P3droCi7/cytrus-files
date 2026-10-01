@@ -92,6 +92,28 @@ final class FileManager
         return $entries;
     }
 
+    /** Returns filesystem capacity for the storage volume, or null when PHP cannot report it. */
+    public static function diskUsage(): ?array
+    {
+        $root = self::root();
+        $total = @disk_total_space($root);
+        $free = @disk_free_space($root);
+        if ($total === false || $free === false || $total <= 0) {
+            return null;
+        }
+
+        $total = (int) $total;
+        $free = min($total, max(0, (int) $free));
+        $used = $total - $free;
+
+        return [
+            'total'     => $total,
+            'free'      => $free,
+            'used'      => $used,
+            'percent'   => (int) round(($used / $total) * 100),
+        ];
+    }
+
     public static function sanitizeName(string $name): string
     {
         $name = str_replace(['/', '\\', "\0"], '', $name);

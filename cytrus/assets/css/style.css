@@ -80,6 +80,19 @@ button.danger, button.link-button { background: transparent; color: var(--danger
 
 .breadcrumbs { margin-bottom: 1rem; color: var(--muted); }
 
+.disk-usage {
+    max-width: 620px;
+    margin: 0 0 1.5rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+.disk-usage-heading { display: flex; justify-content: space-between; gap: 1rem; }
+.disk-usage-heading span { color: var(--accent); font-variant-numeric: tabular-nums; }
+.disk-usage-track { height: 0.65rem; margin-top: 0.65rem; overflow: hidden; background: #0f172a; border-radius: 999px; }
+.disk-usage-fill { height: 100%; background: var(--accent); transition: width 0.25s ease; }
+.disk-usage p { margin: 0.55rem 0 0; color: var(--muted); font-size: 0.9rem; }
+
 .upload-progress {
     position: relative;
     margin-top: 0.75rem;
