@@ -38,12 +38,15 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Sync files (never touches ftp/, data/ or storage/)
+      - name: Sync app files and storage access rules, preserve user files
         run: |
           rsync -rlzc --delete --omit-dir-times --omit-link-times --no-perms --no-owner --no-group \
             --exclude 'ftp/' \
             --exclude 'data/' \
-            --exclude 'storage/' \
+            --include 'storage/' \
+            --include 'storage/.htaccess' \
+            --include 'storage/.gitkeep' \
+            --exclude 'storage/***' \
             -e "ssh -p ${{ secrets.DEPLOY_PORT }}" \
             cytrus/ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
