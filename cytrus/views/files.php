@@ -66,7 +66,7 @@ use function App\e;
                 <a href="index.php?<?= http_build_query(['p' => 'download', 'path' => $entry['relative']]) ?>">Pobierz</a>
             <?php endif; ?>
 
-            <?php if (Auth::can('upload')): ?>
+            <?php if (Auth::can('delete')): ?>
                 <details class="inline-details">
                     <summary>Zmień nazwę</summary>
                     <form method="post" action="index.php?p=rename" class="inline-form">

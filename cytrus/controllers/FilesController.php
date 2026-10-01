@@ -267,7 +267,7 @@ final class FilesController
         Auth::requireLogin();
         Csrf::verifyRequest('files');
 
-        if (!Auth::can('upload')) {
+        if (!Auth::can('delete')) {
             flash('error', 'Brak uprawnień.');
             redirect('files');
         }

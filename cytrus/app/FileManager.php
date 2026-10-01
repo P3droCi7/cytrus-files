@@ -68,6 +68,9 @@ final class FileManager
             if ($name === '.' || $name === '..') {
                 continue;
             }
+            if (self::isProtectedName($name)) {
+                continue;
+            }
             $full = $abs . '/' . $name;
             $relPath = $relTrimmed === '' ? $name : $relTrimmed . '/' . $name;
             $entries[] = [
@@ -120,10 +123,42 @@ final class FileManager
         if ($abs === false || $abs === self::root() || !file_exists($abs)) {
             return false;
         }
+        if (self::isProtectedName(basename($abs))) {
+            return false;
+        }
         if (is_dir($abs)) {
+            if (self::containsProtectedEntry($abs)) {
+                return false;
+            }
             return self::deleteDirRecursive($abs);
         }
         return unlink($abs);
+    }
+
+    private static function isProtectedName(string $name): bool
+    {
+        return in_array(strtolower($name), ['.gitkeep', '.htaccess'], true);
+    }
+
+    private static function containsProtectedEntry(string $dir): bool
+    {
+        $items = scandir($dir);
+        if ($items === false) {
+            return true;
+        }
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            if (self::isProtectedName($item)) {
+                return true;
+            }
+            $path = $dir . '/' . $item;
+            if (is_dir($path) && self::containsProtectedEntry($path)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function deleteDirRecursive(string $dir): bool
@@ -152,7 +187,13 @@ final class FileManager
         if ($abs === false || $abs === self::root() || !file_exists($abs)) {
             return false;
         }
+        if (self::isProtectedName(basename($abs))) {
+            return false;
+        }
         $safeName = self::sanitizeName($newName);
+        if (self::isProtectedName($safeName)) {
+            return false;
+        }
         $target = dirname($abs) . '/' . $safeName;
         if (file_exists($target)) {
             return false;
