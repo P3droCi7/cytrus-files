@@ -18,6 +18,7 @@ final class FilesController
     public static function index(): void
     {
         Auth::requireLogin();
+        FileManager::cleanupStaleChunkSessions();
         $dir = trim((string) ($_GET['dir'] ?? ''), '/');
         $entries = FileManager::listDir($dir);
 
@@ -31,6 +32,76 @@ final class FilesController
             'currentDir'  => $dir,
             'breadcrumbs' => self::breadcrumbs($dir),
             'user'        => Auth::user(),
+        ]);
+    }
+
+    /** Receives one chunk of a large file (JSON API, called by assets/js/upload.js). Keeps each request short to stay under proxy timeouts. */
+    public static function uploadChunk(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        if (!Auth::check()) {
+            http_response_code(401);
+            echo json_encode(['ok' => false, 'error' => 'Wymagane logowanie.']);
+            return;
+        }
+        if (!Csrf::check($_POST['_csrf'] ?? null)) {
+            http_response_code(419);
+            echo json_encode(['ok' => false, 'error' => 'Token CSRF nieprawidłowy, odśwież stronę.']);
+            return;
+        }
+        if (!Auth::can('upload')) {
+            http_response_code(403);
+            echo json_encode(['ok' => false, 'error' => 'Brak uprawnień do przesyłania plików.']);
+            return;
+        }
+
+        $uploadId = (string) ($_POST['upload_id'] ?? '');
+        $chunkIndex = (int) ($_POST['chunk_index'] ?? -1);
+        $totalChunks = (int) ($_POST['total_chunks'] ?? 0);
+        $dir = trim((string) ($_POST['dir'] ?? ''), '/');
+        $filename = (string) ($_POST['filename'] ?? '');
+
+        if (
+            !FileManager::isValidUploadId($uploadId)
+            || $totalChunks < 1 || $totalChunks > 100000
+            || $chunkIndex < 0 || $chunkIndex >= $totalChunks
+            || $filename === ''
+            || FileManager::resolve($dir) === false
+        ) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Nieprawidłowe żądanie fragmentu.']);
+            return;
+        }
+
+        $chunk = $_FILES['chunk'] ?? null;
+        if (!$chunk) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'Brak fragmentu pliku w żądaniu.']);
+            return;
+        }
+
+        $stored = FileManager::storeChunk($uploadId, $chunkIndex, $chunk);
+        if (!$stored['ok']) {
+            echo json_encode($stored);
+            return;
+        }
+
+        if ($chunkIndex < $totalChunks - 1) {
+            echo json_encode(['ok' => true, 'done' => false]);
+            return;
+        }
+
+        $result = FileManager::assembleChunks($uploadId, $totalChunks, $dir, $filename);
+        if ($result['ok']) {
+            $user = Auth::user();
+            AuditLog::log((int) $user['id'], $user['username'], 'upload', $dir . '/' . $result['name']);
+        }
+        echo json_encode([
+            'ok'    => $result['ok'],
+            'done'  => true,
+            'error' => $result['error'] ?? null,
+            'name'  => $result['name'] ?? null,
         ]);
     }
 

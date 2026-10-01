@@ -37,6 +37,7 @@ try {
         $page === 'logout' && $method === 'POST'             => AuthController::logout(),
         $page === 'files'                                     => FilesController::index(),
         $page === 'upload' && $method === 'POST'             => FilesController::upload(),
+        $page === 'upload_chunk' && $method === 'POST'       => FilesController::uploadChunk(),
         $page === 'download'                                  => FilesController::download(),
         $page === 'mkdir' && $method === 'POST'              => FilesController::mkdir(),
         $page === 'delete' && $method === 'POST'             => FilesController::delete(),

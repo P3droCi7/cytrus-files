@@ -212,6 +212,95 @@ final class FileManager
         return $candidate;
     }
 
+    public static function isValidUploadId(string $id): bool
+    {
+        return (bool) preg_match('/^[a-f0-9]{16,64}$/', $id);
+    }
+
+    private static function chunkDir(string $uploadId): string
+    {
+        $dir = rtrim((string) Config::get('data_dir'), '/') . '/uploads_tmp/' . $uploadId;
+        if (!is_dir($dir)) {
+            mkdir($dir, 0770, true);
+        }
+        return $dir;
+    }
+
+    /** @param array<string,mixed> $file single normalized entry from $_FILES */
+    public static function storeChunk(string $uploadId, int $index, array $file): array
+    {
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return ['ok' => false, 'error' => 'Błąd przesyłania fragmentu (kod ' . $file['error'] . ').'];
+        }
+        if (!is_uploaded_file($file['tmp_name'])) {
+            return ['ok' => false, 'error' => 'Nieprawidłowe żądanie przesyłania fragmentu.'];
+        }
+        $target = self::chunkDir($uploadId) . '/' . $index . '.part';
+        if (!move_uploaded_file($file['tmp_name'], $target)) {
+            return ['ok' => false, 'error' => 'Nie udało się zapisać fragmentu pliku.'];
+        }
+        return ['ok' => true];
+    }
+
+    /** Concatenates all received chunks into the final file, in order, then discards the temp directory. */
+    public static function assembleChunks(string $uploadId, int $totalChunks, string $relativeDir, string $originalName): array
+    {
+        $chunkDir = self::chunkDir($uploadId);
+        for ($i = 0; $i < $totalChunks; $i++) {
+            if (!is_file($chunkDir . '/' . $i . '.part')) {
+                return ['ok' => false, 'error' => 'Brakuje fragmentu pliku nr ' . $i . '.'];
+            }
+        }
+
+        $destDir = self::resolve($relativeDir);
+        if ($destDir === false || !is_dir($destDir)) {
+            self::deleteDirRecursive($chunkDir);
+            return ['ok' => false, 'error' => 'Nieprawidłowy folder docelowy.'];
+        }
+
+        $safeName = self::sanitizeName($originalName);
+        if (self::isBlockedExtension($safeName)) {
+            self::deleteDirRecursive($chunkDir);
+            return ['ok' => false, 'error' => "Niedozwolony typ pliku: {$safeName}"];
+        }
+
+        $target = self::uniqueTarget($destDir, $safeName);
+        $out = fopen($target, 'wb');
+        if ($out === false) {
+            self::deleteDirRecursive($chunkDir);
+            return ['ok' => false, 'error' => 'Nie udało się utworzyć pliku docelowego.'];
+        }
+        for ($i = 0; $i < $totalChunks; $i++) {
+            $in = fopen($chunkDir . '/' . $i . '.part', 'rb');
+            stream_copy_to_stream($in, $out);
+            fclose($in);
+        }
+        fclose($out);
+        chmod($target, 0664);
+
+        self::deleteDirRecursive($chunkDir);
+
+        return ['ok' => true, 'name' => basename($target)];
+    }
+
+    /** Removes abandoned chunk sessions (e.g. from closed tabs) older than $maxAgeSeconds. */
+    public static function cleanupStaleChunkSessions(int $maxAgeSeconds = 86400): void
+    {
+        $base = rtrim((string) Config::get('data_dir'), '/') . '/uploads_tmp';
+        if (!is_dir($base)) {
+            return;
+        }
+        foreach (scandir($base) ?: [] as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            $path = $base . '/' . $name;
+            if (is_dir($path) && (time() - (int) filemtime($path)) > $maxAgeSeconds) {
+                self::deleteDirRecursive($path);
+            }
+        }
+    }
+
     public static function humanSize(int $bytes): string
     {
         $units = ['B', 'KB', 'MB', 'GB', 'TB'];

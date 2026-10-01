@@ -1,75 +1,138 @@
-// Classic <form> submits give no upload progress, so intercept with XHR and follow the server's redirect manually.
-document.addEventListener('DOMContentLoaded', function () {
-    var form = document.getElementById('uploadForm');
-    if (!form) {
-        return;
+// Large uploads on shared hosting hit a hard ~60s proxy timeout. Splitting into small
+// chunks keeps every single HTTP request short, regardless of total file size or link speed.
+(function () {
+    var CHUNK_SIZE = 4 * 1024 * 1024; // 4MB - safe margin even on slow connections
+
+    function uuid() {
+        if (window.crypto && crypto.getRandomValues) {
+            var bytes = new Uint8Array(16);
+            crypto.getRandomValues(bytes);
+            return Array.prototype.map.call(bytes, function (b) {
+                return b.toString(16).padStart(2, '0');
+            }).join('');
+        }
+        return Date.now().toString(16) + Math.random().toString(16).slice(2);
     }
 
-    var progressWrap = document.getElementById('uploadProgress');
-    var progressBar = document.getElementById('uploadProgressBar');
-    var progressLabel = document.getElementById('uploadProgressLabel');
-    var submitButton = form.querySelector('button[type="submit"]');
+    function sendChunk(formData, onProgress) {
+        return new Promise(function (resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', 'index.php?p=upload_chunk', true);
+            xhr.timeout = 0;
+            xhr.upload.addEventListener('progress', function (e) {
+                if (e.lengthComputable) {
+                    onProgress(e.loaded);
+                }
+            });
+            xhr.addEventListener('load', function () {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        resolve(JSON.parse(xhr.responseText));
+                    } catch (err) {
+                        reject(new Error('Nieprawidłowa odpowiedź serwera.'));
+                    }
+                } else {
+                    reject(new Error('HTTP ' + xhr.status));
+                }
+            });
+            xhr.addEventListener('error', function () { reject(new Error('Błąd sieci.')); });
+            xhr.addEventListener('timeout', function () { reject(new Error('Przekroczono czas oczekiwania.')); });
+            xhr.send(formData);
+        });
+    }
 
-    form.addEventListener('submit', function (event) {
-        var fileInput = form.querySelector('input[type="file"]');
-        if (!fileInput || fileInput.files.length === 0) {
-            return; // let the browser show its own "required" validation
+    async function uploadFile(file, dir, csrfToken, onProgress) {
+        var uploadId = uuid();
+        var totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
+        var sentBytes = 0;
+
+        for (var i = 0; i < totalChunks; i++) {
+            var start = i * CHUNK_SIZE;
+            var end = Math.min(file.size, start + CHUNK_SIZE);
+            var formData = new FormData();
+            formData.append('_csrf', csrfToken);
+            formData.append('dir', dir);
+            formData.append('upload_id', uploadId);
+            formData.append('filename', file.name);
+            formData.append('chunk_index', String(i));
+            formData.append('total_chunks', String(totalChunks));
+            formData.append('chunk', file.slice(start, end), file.name);
+
+            var response = null;
+            var lastError = null;
+            for (var attempt = 0; attempt < 3 && !response; attempt++) {
+                try {
+                    response = await sendChunk(formData, function (loaded) {
+                        onProgress(sentBytes + loaded);
+                    });
+                } catch (err) {
+                    lastError = err;
+                }
+            }
+            if (!response) {
+                throw lastError || new Error('Nie udało się przesłać fragmentu pliku.');
+            }
+            if (!response.ok) {
+                throw new Error(response.error || 'Serwer odrzucił fragment pliku.');
+            }
+            sentBytes = end;
+            onProgress(sentBytes);
         }
-        event.preventDefault();
+    }
 
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', form.action, true);
-        xhr.timeout = 0; // let large uploads run as long as needed, don't let the browser time out on its own
-
-        progressWrap.hidden = false;
-        progressBar.style.width = '0%';
-        progressLabel.textContent = '0%';
-        if (submitButton) {
-            submitButton.disabled = true;
+    document.addEventListener('DOMContentLoaded', function () {
+        var form = document.getElementById('uploadForm');
+        if (!form) {
+            return;
         }
 
-        xhr.upload.addEventListener('progress', function (e) {
-            if (!e.lengthComputable) {
-                return;
-            }
-            var percent = Math.round((e.loaded / e.total) * 100);
-            progressBar.style.width = percent + '%';
-            progressLabel.textContent = percent + '%';
-        });
+        var progressWrap = document.getElementById('uploadProgress');
+        var progressBar = document.getElementById('uploadProgressBar');
+        var progressLabel = document.getElementById('uploadProgressLabel');
+        var submitButton = form.querySelector('button[type="submit"]');
 
-        xhr.addEventListener('load', function () {
-            if (xhr.status >= 200 && xhr.status < 400) {
-                // Server replies with a redirect to the files view; follow it to show flash messages.
-                window.location.href = xhr.responseURL || form.action;
-                return;
+        form.addEventListener('submit', function (event) {
+            var fileInput = form.querySelector('input[type="file"]');
+            if (!fileInput || fileInput.files.length === 0) {
+                return; // let the browser show its own "required" validation
             }
-            progressLabel.textContent = 'Serwer odrzucił plik (HTTP ' + xhr.status + '). Sprawdź limity PHP/serwera.';
+            event.preventDefault();
+
+            var files = Array.prototype.slice.call(fileInput.files);
+            var dir = form.querySelector('input[name="dir"]').value;
+            var csrfToken = form.querySelector('input[name="_csrf"]').value;
+            var totalSize = files.reduce(function (sum, f) { return sum + f.size; }, 0) || 1;
+            var completedSize = 0;
+
+            progressWrap.hidden = false;
+            progressBar.style.width = '0%';
+            progressLabel.textContent = 'Przesyłanie 0%';
             if (submitButton) {
-                submitButton.disabled = false;
+                submitButton.disabled = true;
             }
-        });
 
-        xhr.addEventListener('error', function () {
-            progressLabel.textContent = 'Błąd sieci podczas przesyłania. Spróbuj ponownie.';
-            if (submitButton) {
-                submitButton.disabled = false;
+            function updateProgress(currentFileBytes) {
+                var percent = Math.min(100, Math.round(((completedSize + currentFileBytes) / totalSize) * 100));
+                progressBar.style.width = percent + '%';
+                progressLabel.textContent = 'Przesyłanie ' + percent + '%';
             }
-        });
 
-        xhr.addEventListener('abort', function () {
-            progressLabel.textContent = 'Przesyłanie przerwane.';
-            if (submitButton) {
-                submitButton.disabled = false;
-            }
+            (async function () {
+                try {
+                    for (var i = 0; i < files.length; i++) {
+                        await uploadFile(files[i], dir, csrfToken, updateProgress);
+                        completedSize += files[i].size;
+                    }
+                    progressLabel.textContent = 'Gotowe, odświeżanie listy...';
+                    window.location.href = 'index.php?p=files&dir=' + encodeURIComponent(dir);
+                } catch (err) {
+                    progressLabel.textContent = 'Błąd: ' + err.message;
+                    if (submitButton) {
+                        submitButton.disabled = false;
+                    }
+                }
+            })();
         });
-
-        xhr.addEventListener('timeout', function () {
-            progressLabel.textContent = 'Przekroczono czas oczekiwania serwera.';
-            if (submitButton) {
-                submitButton.disabled = false;
-            }
-        });
-
-        xhr.send(new FormData(form));
     });
-});
+})();
+
