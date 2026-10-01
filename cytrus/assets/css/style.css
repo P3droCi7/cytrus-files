@@ -80,6 +80,26 @@ button.danger, button.link-button { background: transparent; color: var(--danger
 
 .breadcrumbs { margin-bottom: 1rem; color: var(--muted); }
 
+.upload-progress {
+    position: relative;
+    margin-top: 0.75rem;
+    height: 1.4rem;
+    background: #0f172a;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #334155;
+}
+.upload-progress-bar { height: 100%; width: 0; background: var(--accent); transition: width 0.15s ease; }
+.upload-progress-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    color: var(--text);
+}
+
 .file-table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
 .file-table th, .file-table td { padding: 0.6rem 0.8rem; border-bottom: 1px solid #334155; text-align: left; vertical-align: top; }
 .file-table th { color: var(--muted); font-weight: 600; }

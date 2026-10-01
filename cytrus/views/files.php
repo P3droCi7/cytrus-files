@@ -21,12 +21,16 @@ use function App\e;
 <?php if (Auth::can('upload')): ?>
 <section class="panel">
     <h2>Prześlij pliki</h2>
-    <form method="post" action="index.php?p=upload" enctype="multipart/form-data">
+    <form method="post" action="index.php?p=upload" enctype="multipart/form-data" id="uploadForm">
         <?= Csrf::field() ?>
         <input type="hidden" name="dir" value="<?= e($currentDir) ?>">
         <input type="file" name="files[]" multiple required>
         <button type="submit">Wyślij</button>
     </form>
+    <div class="upload-progress" id="uploadProgress" hidden>
+        <div class="upload-progress-bar" id="uploadProgressBar"></div>
+        <span class="upload-progress-label" id="uploadProgressLabel">0%</span>
+    </div>
 
     <h2>Nowy folder</h2>
     <form method="post" action="index.php?p=mkdir" class="inline-form">
