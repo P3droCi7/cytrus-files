@@ -28,6 +28,14 @@ function get_flashes(): array
     return $flashes;
 }
 
+/** Appends the file's mtime as a query string so CDN/browser caches fetch fresh assets after each deploy. */
+function asset_version(string $relativePath): string
+{
+    $path = APP_ROOT . '/' . ltrim($relativePath, '/');
+    $mtime = @filemtime($path);
+    return $relativePath . ($mtime !== false ? '?v=' . $mtime : '');
+}
+
 /** @param array<string,mixed> $vars */
 function view(string $name, array $vars = [], bool $withChrome = true): void
 {

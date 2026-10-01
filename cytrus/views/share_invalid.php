@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Link nieprawidłowy - Cytrus Files</title>
-<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="<?= \App\e(\App\asset_version('assets/css/style.css')) ?>">
 </head>
 <body class="centered">
 <div class="card">
