@@ -1,0 +1,65 @@
+name: Deploy Cytrus Files
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cytrus/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+
+      - name: Syntax-check every PHP file
+        run: find cytrus -name "*.php" -print0 | xargs -0 -n1 -P4 php -l
+
+  deploy:
+    needs: lint
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load deploy SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync files (never touches ftp/ or data/)
+        run: |
+          rsync -az --delete \
+            --exclude 'ftp/' \
+            --exclude 'data/' \
+            -e "ssh -p ${{ secrets.DEPLOY_PORT }}" \
+            cytrus/ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Fix permissions for the PHP-FPM user
+        run: |
+          ssh -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+            set -e
+            chmod 755 "${{ secrets.DEPLOY_PATH }}"/app "${{ secrets.DEPLOY_PATH }}"/controllers "${{ secrets.DEPLOY_PATH }}"/views "${{ secrets.DEPLOY_PATH }}"/bin
+            chmod 644 "${{ secrets.DEPLOY_PATH }}"/config.php
+            chmod 777 "${{ secrets.DEPLOY_PATH }}"/data
+          '
+
+      - name: Health check
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.HEALTHCHECK_URL }}")
+          echo "HTTP $code"
+          if [ "$code" -ge 500 ]; then
+            echo "Deployment produced a server error, failing the build."
+            exit 1
+          fi

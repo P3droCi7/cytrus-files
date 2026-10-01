@@ -1,0 +1,6 @@
+/data/app.sqlite
+/data/app.sqlite-*
+/data/*.log
+/ftp/*
+!/ftp/.htaccess
+!/ftp/.gitkeep

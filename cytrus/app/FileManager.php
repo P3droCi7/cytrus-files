@@ -1,0 +1,290 @@
+<?php
+declare(strict_types=1);
+
+namespace App;
+
+final class FileManager
+{
+    public static function root(): string
+    {
+        $root = (string) Config::get('storage_root');
+        if (!is_dir($root)) {
+            mkdir($root, 0775, true);
+        }
+        $real = realpath($root);
+        return $real !== false ? rtrim($real, '/') : rtrim($root, '/');
+    }
+
+    /** Resolves a user supplied relative path safely within the storage root. Returns false if it would escape the root. */
+    public static function resolve(string $relative): string|false
+    {
+        $relative = str_replace('\\', '/', $relative);
+        $relative = trim($relative, '/');
+        $root = self::root();
+
+        if ($relative === '' || $relative === '.') {
+            return $root;
+        }
+
+        $segments = [];
+        foreach (explode('/', $relative) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                return false; // never allow walking above root
+            }
+            $segments[] = $segment;
+        }
+
+        $candidate = $root . '/' . implode('/', $segments);
+        $real = realpath($candidate);
+
+        if ($real === false) {
+            // target may not exist yet (e.g. a new folder about to be created)
+            if (!str_starts_with($candidate . '/', $root . '/')) {
+                return false;
+            }
+            return $candidate;
+        }
+
+        if ($real !== $root && !str_starts_with($real . '/', $root . '/')) {
+            return false;
+        }
+
+        return $real;
+    }
+
+    public static function listDir(string $relative): array|false
+    {
+        $abs = self::resolve($relative);
+        if ($abs === false || !is_dir($abs)) {
+            return false;
+        }
+
+        $entries = [];
+        $relTrimmed = trim($relative, '/');
+        foreach (scandir($abs) ?: [] as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            $full = $abs . '/' . $name;
+            $relPath = $relTrimmed === '' ? $name : $relTrimmed . '/' . $name;
+            $entries[] = [
+                'name'     => $name,
+                'is_dir'   => is_dir($full),
+                'size'     => is_file($full) ? (int) filesize($full) : 0,
+                'mtime'    => filemtime($full) ?: 0,
+                'relative' => $relPath,
+            ];
+        }
+
+        usort($entries, static function (array $a, array $b): int {
+            if ($a['is_dir'] !== $b['is_dir']) {
+                return $a['is_dir'] ? -1 : 1;
+            }
+            return strnatcasecmp($a['name'], $b['name']);
+        });
+
+        return $entries;
+    }
+
+    public static function sanitizeName(string $name): string
+    {
+        $name = str_replace(['/', '\\', "\0"], '', $name);
+        $name = preg_replace('/[\x00-\x1F\x7F]/u', '', $name) ?? $name;
+        $name = trim($name, " .\t\n\r\0\x0B");
+        if ($name === '') {
+            $name = 'plik_' . bin2hex(random_bytes(4));
+        }
+        return mb_substr($name, 0, 180);
+    }
+
+    public static function createFolder(string $relativeParent, string $name): bool
+    {
+        $parent = self::resolve($relativeParent);
+        if ($parent === false || !is_dir($parent)) {
+            return false;
+        }
+        $safeName = self::sanitizeName($name);
+        $target = $parent . '/' . $safeName;
+        if (file_exists($target)) {
+            return false;
+        }
+        return mkdir($target, 0775);
+    }
+
+    public static function delete(string $relative): bool
+    {
+        $abs = self::resolve($relative);
+        if ($abs === false || $abs === self::root() || !file_exists($abs)) {
+            return false;
+        }
+        if (is_dir($abs)) {
+            return self::deleteDirRecursive($abs);
+        }
+        return unlink($abs);
+    }
+
+    private static function deleteDirRecursive(string $dir): bool
+    {
+        $items = scandir($dir);
+        if ($items === false) {
+            return false;
+        }
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            if (is_dir($path)) {
+                self::deleteDirRecursive($path);
+            } else {
+                unlink($path);
+            }
+        }
+        return rmdir($dir);
+    }
+
+    public static function rename(string $relative, string $newName): bool
+    {
+        $abs = self::resolve($relative);
+        if ($abs === false || $abs === self::root() || !file_exists($abs)) {
+            return false;
+        }
+        $safeName = self::sanitizeName($newName);
+        $target = dirname($abs) . '/' . $safeName;
+        if (file_exists($target)) {
+            return false;
+        }
+        return rename($abs, $target);
+    }
+
+    public static function isBlockedExtension(string $filename): bool
+    {
+        $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        return in_array($ext, (array) Config::get('blocked_extensions', []), true);
+    }
+
+    /** @param array<string,mixed> $file single normalized entry from $_FILES */
+    public static function saveUpload(array $file, string $relativeDir): array
+    {
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return ['ok' => false, 'error' => 'Błąd przesyłania pliku (kod ' . $file['error'] . ').'];
+        }
+        if (!is_uploaded_file($file['tmp_name'])) {
+            return ['ok' => false, 'error' => 'Nieprawidłowe żądanie przesyłania pliku.'];
+        }
+
+        $originalName = self::sanitizeName($file['name']);
+        if (self::isBlockedExtension($originalName)) {
+            return ['ok' => false, 'error' => "Niedozwolony typ pliku: {$originalName}"];
+        }
+
+        $dir = self::resolve($relativeDir);
+        if ($dir === false || !is_dir($dir)) {
+            return ['ok' => false, 'error' => 'Nieprawidłowy folder docelowy.'];
+        }
+
+        $target = self::uniqueTarget($dir, $originalName);
+        if (!move_uploaded_file($file['tmp_name'], $target)) {
+            return ['ok' => false, 'error' => "Nie udało się zapisać pliku {$originalName}."];
+        }
+        chmod($target, 0664);
+
+        return ['ok' => true, 'path' => $target, 'name' => basename($target)];
+    }
+
+    private static function uniqueTarget(string $dir, string $name): string
+    {
+        $target = $dir . '/' . $name;
+        if (!file_exists($target)) {
+            return $target;
+        }
+        $pathInfo = pathinfo($name);
+        $base = $pathInfo['filename'];
+        $ext  = isset($pathInfo['extension']) ? '.' . $pathInfo['extension'] : '';
+        $i = 1;
+        do {
+            $candidate = $dir . '/' . $base . ' (' . $i . ')' . $ext;
+            $i++;
+        } while (file_exists($candidate));
+        return $candidate;
+    }
+
+    public static function humanSize(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $i = 0;
+        $size = (float) $bytes;
+        while ($size >= 1024 && $i < count($units) - 1) {
+            $size /= 1024;
+            $i++;
+        }
+        return round($size, $i === 0 ? 0 : 1) . ' ' . $units[$i];
+    }
+
+    public static function mimeType(string $absPath): string
+    {
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = $finfo ? finfo_file($finfo, $absPath) : false;
+        if ($finfo) {
+            finfo_close($finfo);
+        }
+        return $mime ?: 'application/octet-stream';
+    }
+
+    /** Streams a file to the browser, honouring HTTP Range requests, then terminates the script. */
+    public static function stream(string $absPath, string $downloadName): never
+    {
+        $size = (int) filesize($absPath);
+        $mime = self::mimeType($absPath);
+
+        $start = 0;
+        $end = $size - 1;
+        $statusCode = 200;
+
+        if (isset($_SERVER['HTTP_RANGE']) && preg_match('/bytes=(\d*)-(\d*)/', $_SERVER['HTTP_RANGE'], $m)) {
+            $start = $m[1] === '' ? 0 : (int) $m[1];
+            $end   = $m[2] === '' ? $size - 1 : (int) $m[2];
+            $end = min($end, $size - 1);
+            if ($start > $end || $start < 0) {
+                header('Content-Range: bytes */' . $size);
+                http_response_code(416);
+                exit;
+            }
+            $statusCode = 206;
+        }
+
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
+        http_response_code($statusCode);
+        header('Content-Type: ' . $mime);
+        header('Content-Disposition: attachment; filename="' . rawurlencode($downloadName) . '"');
+        header('Accept-Ranges: bytes');
+        header('Content-Length: ' . ($end - $start + 1));
+        header('X-Content-Type-Options: nosniff');
+        if ($statusCode === 206) {
+            header("Content-Range: bytes {$start}-{$end}/{$size}");
+        }
+
+        $handle = fopen($absPath, 'rb');
+        if ($handle === false) {
+            http_response_code(500);
+            exit;
+        }
+        fseek($handle, $start);
+        $remaining = $end - $start + 1;
+        $chunk = 1024 * 512;
+        while ($remaining > 0 && !feof($handle)) {
+            $read = (int) min($chunk, $remaining);
+            echo fread($handle, $read);
+            flush();
+            $remaining -= $read;
+        }
+        fclose($handle);
+        exit;
+    }
+}
