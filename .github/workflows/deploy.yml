@@ -38,11 +38,12 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Sync files (never touches ftp/ or data/)
+      - name: Sync files (never touches ftp/, data/ or storage/)
         run: |
           rsync -rlzc --delete --omit-dir-times --omit-link-times --no-perms --no-owner --no-group \
             --exclude 'ftp/' \
             --exclude 'data/' \
+            --exclude 'storage/' \
             -e "ssh -p ${{ secrets.DEPLOY_PORT }}" \
             cytrus/ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
@@ -50,9 +51,10 @@ jobs:
         run: |
           ssh -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
             set -e
+            mkdir -p "${{ secrets.DEPLOY_PATH }}"/storage
             chmod 755 "${{ secrets.DEPLOY_PATH }}"/app "${{ secrets.DEPLOY_PATH }}"/controllers "${{ secrets.DEPLOY_PATH }}"/views "${{ secrets.DEPLOY_PATH }}"/bin
             chmod 644 "${{ secrets.DEPLOY_PATH }}"/config.php
-            chmod 777 "${{ secrets.DEPLOY_PATH }}"/data
+            chmod 777 "${{ secrets.DEPLOY_PATH }}"/data "${{ secrets.DEPLOY_PATH }}"/storage
           '
 
       - name: Health check

@@ -5,7 +5,7 @@ declare(strict_types=1);
 return [
     'app_name'              => 'Cytrus Files',
     'timezone'              => 'Europe/Warsaw',
-    'storage_root'          => __DIR__ . '/ftp',
+    'storage_root'          => __DIR__ . '/storage',
     'data_dir'              => __DIR__ . '/data',
     'session_name'          => 'cytrus_sid',
     'session_lifetime'      => 60 * 60 * 8, // 8h

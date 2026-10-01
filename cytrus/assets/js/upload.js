@@ -41,7 +41,7 @@
         });
     }
 
-    async function uploadFile(file, dir, csrfToken, onProgress) {
+    async function uploadFile(file, dir, csrfToken, onProgress, onFinalizing) {
         var uploadId = uuid();
         var totalChunks = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
         var sentBytes = 0;
@@ -77,7 +77,36 @@
             }
             sentBytes = end;
             onProgress(sentBytes);
+
+            if (response.processing) {
+                onFinalizing();
+                await waitForAssembly(uploadId);
+            }
         }
+    }
+
+    function sleep(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    // Final chunk returns immediately (processing:true) while the server keeps assembling the
+    // file in the background, so poll until it reports done instead of blindly waiting.
+    async function waitForAssembly(uploadId) {
+        var maxAttempts = 600; // up to 20 minutes for very large files on slow disks
+        for (var attempt = 0; attempt < maxAttempts; attempt++) {
+            await sleep(2000);
+            var res = await fetch('index.php?p=upload_status&upload_id=' + encodeURIComponent(uploadId), {
+                credentials: 'same-origin',
+            });
+            var status = await res.json();
+            if (status.done) {
+                if (!status.ok) {
+                    throw new Error(status.error || 'Nie udało się dokończyć zapisu pliku na serwerze.');
+                }
+                return;
+            }
+        }
+        throw new Error('Serwer zbyt długo składa plik. Sprawdź listę plików ręcznie za chwilę.');
     }
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -120,7 +149,9 @@
             (async function () {
                 try {
                     for (var i = 0; i < files.length; i++) {
-                        await uploadFile(files[i], dir, csrfToken, updateProgress);
+                        await uploadFile(files[i], dir, csrfToken, updateProgress, function () {
+                            progressLabel.textContent = 'Serwer zapisuje plik na dysku...';
+                        });
                         completedSize += files[i].size;
                     }
                     progressLabel.textContent = 'Gotowe, odświeżanie listy...';

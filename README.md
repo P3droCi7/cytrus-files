@@ -4,23 +4,26 @@ Prywatna aplikacja do przesyłania i pobierania plików na Twoim serwerze (Mikru
 
 Wymagania: **PHP 8.4** z rozszerzeniami `pdo_sqlite`, `fileinfo`, `session`, `mbstring` (standardowo włączone w większości dystrybucji PHP).
 
+> ⚠️ **Ważne o `ftp/`:** usługa Cytrus z definicji zawsze udostępnia zawartość folderu `ftp/` publicznie przez HTTP (to reklamowana funkcja — "dostęp do serwera za pomocą współdzielonego serwera FTP"), **niezależnie od logowania, uprawnień czy `.htaccess`**. Dlatego aplikacja NIE przechowuje tam plików użytkowników — magazynem jest osobny folder [`storage/`](cytrus/storage), który faktycznie respektuje `.htaccess` na tym hostingu. Plik w `ftp/` wrzucony starym klientem FTP i plik wgrany przez panel webowy to od teraz dwa niezależne zbiory.
+
 ## Co zawiera projekt
 
 ```
 cytrus/
   index.php            <- jedyny publiczny plik wejściowy (front controller)
   config.php           <- konfiguracja aplikacji (edytuj przed wdrożeniem)
-  ftp/                  <- Twój istniejący folder z plikami (katalog główny przechowywania)
+  storage/              <- prywatny magazyn plików aplikacji (realnie chroniony .htaccess)
+  ftp/                  <- Twój stary folder FTP - Cytrus serwuje go PUBLICZNIE, appka go nie używa
   data/                 <- baza danych SQLite (użytkownicy, linki, dziennik zdarzeń) - NIE commitować
   app/                   <- logika aplikacji (auth, pliki, CSRF, baza danych...)
   controllers/           <- kontrolery obsługujące poszczególne akcje
   views/                 <- szablony HTML
-  assets/                <- CSS
+  assets/                <- CSS, JS (upload fragmentaryczny)
   bin/console.php        <- narzędzie CLI (tworzenie administratora z SSH)
-  .htaccess, */.htaccess <- twarde blokady dostępu (Apache)
+  .htaccess, */.htaccess <- blokady dostępu (realnie działają wszędzie poza ftp/)
 ```
 
-Twój obecny `ftp/` zostaje nietknięty — aplikacja czyta/zapisuje pliki właśnie tam.
+Twój obecny `ftp/` zostaje nietknięty — aplikacja go nie rusza, bo i tak nie da się go realnie zabezpieczyć na tym hostingu.
 
 ## 1. Wgranie na serwer
 
@@ -45,30 +48,24 @@ chmod 640 config.php
 mkdir -p data && chmod 770 data
 ```
 
-PHP-FPM musi mieć prawo zapisu do `data/` (baza SQLite) oraz do `ftp/` (przesyłanie plików). Jeśli proces PHP działa jako inny użytkownik niż `cytrus`, dodaj go do grupy `cytrus` albo dostosuj właściciela:
+PHP-FPM na Cytrusie (Mikrus) zwykle działa jako inny użytkownik niż Twoje konto SSH i jest objęty `open_basedir` ograniczonym do `/cytrus`. Jeśli po wdrożeniu dostaniesz błąd 500 o braku dostępu do plików, poluzuj uprawnienia katalogów do `755`/`770` zamiast `750`/`700` — pełna procedura diagnostyczna jest opisana w historii commitów tego repo (permission denied → open_basedir → data dir).
 
 ```bash
-sudo usermod -aG cytrus www-data   # przykład dla Apache/nginx na Debianie
-# lub
-sudo chown -R cytrus:cytrus /cytrus/data
+sudo chown -R cytrus:cytrus /cytrus/data /cytrus/storage   # jeśli masz do tego uprawnienia
 ```
 
-## 3. KRYTYCZNE: zablokuj bezpośredni dostęp do `ftp/`, `data/`, `app/`, `controllers/`, `views/`, `bin/`
+## 3. KRYTYCZNE: `ftp/` jest ZAWSZE publiczny — appka go nie używa
 
-Cały sens logowania i uprawnień zniknie, jeśli ktoś będzie mógł wejść bezpośrednio pod `https://twojadomena/ftp/nazwa_pliku` z pominięciem aplikacji.
+Cytrus to usługa nginx, która **celowo** serwuje zawartość folderu `ftp/` publicznie przez HTTP niezależnie od `.htaccess`, logowania czy uprawnień — to jest jej reklamowana funkcja ("dostęp do serwera za pomocą współdzielonego serwera FTP"), nie błąd konfiguracji, i nie da się tego wyłączyć z poziomu użytkownika.
 
-**Apache**: dołączone pliki `.htaccess` (`Require all denied`) już to blokują — upewnij się, że `AllowOverride All` jest włączone dla katalogu `/cytrus` w konfiguracji vhosta.
+Dlatego magazynem plików aplikacji jest **`storage/`**, nie `ftp/`. Na tym hostingu `.htaccess` (`Require all denied`) **faktycznie działa** dla wszystkich pozostałych katalogów (`app/`, `controllers/`, `views/`, `data/`, `bin/`, `storage/`) — potwierdzone w praktyce (bezpośrednie żądania do tych ścieżek zwracają 403).
 
-**nginx (jeśli Mikrus używa nginx + php-fpm)**: `.htaccess` jest ignorowany — musisz dodać blokady ręcznie w konfiguracji serwera:
-
-```nginx
-location ~ ^/(ftp|data|app|controllers|views|bin)/ {
-    deny all;
-    return 403;
-}
+Po wdrożeniu **koniecznie przetestuj**:
+```bash
+curl -I https://twojadomena/storage/jakikolwiek_plik   # oczekiwane: 403
+curl -I https://twojadomena/data/app.sqlite            # oczekiwane: 403
+curl -I https://twojadomena/ftp/cokolwiek               # to będzie 200 - i tak ma być, appka tam nie pisze
 ```
-
-Po wdrożeniu **koniecznie przetestuj**: wejście na `https://twojadomena/ftp/jakikolwiek_plik` lub `https://twojadomena/data/app.sqlite` musi zwracać błąd 403/404, a nie zawartość pliku.
 
 ## 4. Pierwsze uruchomienie
 

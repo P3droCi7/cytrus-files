@@ -4,3 +4,6 @@
 /ftp/*
 !/ftp/.htaccess
 !/ftp/.gitkeep
+/storage/*
+!/storage/.htaccess
+!/storage/.gitkeep

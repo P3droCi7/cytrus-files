@@ -242,45 +242,73 @@ final class FileManager
         return ['ok' => true];
     }
 
-    /** Concatenates all received chunks into the final file, in order, then discards the temp directory. */
+    /** Concatenates all received chunks into the final file, in order, then writes a status file for polling. */
     public static function assembleChunks(string $uploadId, int $totalChunks, string $relativeDir, string $originalName): array
     {
         $chunkDir = self::chunkDir($uploadId);
         for ($i = 0; $i < $totalChunks; $i++) {
             if (!is_file($chunkDir . '/' . $i . '.part')) {
-                return ['ok' => false, 'error' => 'Brakuje fragmentu pliku nr ' . $i . '.'];
+                $result = ['ok' => false, 'error' => 'Brakuje fragmentu pliku nr ' . $i . '.'];
+                self::writeStatus($uploadId, $result);
+                return $result;
             }
         }
 
         $destDir = self::resolve($relativeDir);
         if ($destDir === false || !is_dir($destDir)) {
+            $result = ['ok' => false, 'error' => 'Nieprawidłowy folder docelowy.'];
+            self::writeStatus($uploadId, $result);
             self::deleteDirRecursive($chunkDir);
-            return ['ok' => false, 'error' => 'Nieprawidłowy folder docelowy.'];
+            return $result;
         }
 
         $safeName = self::sanitizeName($originalName);
         if (self::isBlockedExtension($safeName)) {
+            $result = ['ok' => false, 'error' => "Niedozwolony typ pliku: {$safeName}"];
+            self::writeStatus($uploadId, $result);
             self::deleteDirRecursive($chunkDir);
-            return ['ok' => false, 'error' => "Niedozwolony typ pliku: {$safeName}"];
+            return $result;
         }
 
         $target = self::uniqueTarget($destDir, $safeName);
         $out = fopen($target, 'wb');
         if ($out === false) {
+            $result = ['ok' => false, 'error' => 'Nie udało się utworzyć pliku docelowego.'];
+            self::writeStatus($uploadId, $result);
             self::deleteDirRecursive($chunkDir);
-            return ['ok' => false, 'error' => 'Nie udało się utworzyć pliku docelowego.'];
+            return $result;
         }
         for ($i = 0; $i < $totalChunks; $i++) {
-            $in = fopen($chunkDir . '/' . $i . '.part', 'rb');
+            $partPath = $chunkDir . '/' . $i . '.part';
+            $in = fopen($partPath, 'rb');
             stream_copy_to_stream($in, $out);
             fclose($in);
+            unlink($partPath); // free disk space as we go, no need to keep raw fragments after copying
         }
         fclose($out);
         chmod($target, 0664);
 
-        self::deleteDirRecursive($chunkDir);
+        $result = ['ok' => true, 'name' => basename($target)];
+        self::writeStatus($uploadId, $result);
+        return $result;
+    }
 
-        return ['ok' => true, 'name' => basename($target)];
+    /** Persists the final outcome so the browser can poll it after the connection to the last chunk request was closed early. */
+    private static function writeStatus(string $uploadId, array $result): void
+    {
+        $dir = self::chunkDir($uploadId);
+        file_put_contents($dir . '/status.json', json_encode(array_merge(['done' => true], $result)));
+    }
+
+    /** @return array|null null means "still processing" (or unknown/expired upload id) */
+    public static function readStatus(string $uploadId): ?array
+    {
+        $path = rtrim((string) Config::get('data_dir'), '/') . '/uploads_tmp/' . $uploadId . '/status.json';
+        if (!is_file($path)) {
+            return null;
+        }
+        $data = json_decode((string) file_get_contents($path), true);
+        return is_array($data) ? $data : null;
     }
 
     /** Removes abandoned chunk sessions (e.g. from closed tabs) older than $maxAgeSeconds. */

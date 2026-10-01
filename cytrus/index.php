@@ -38,6 +38,7 @@ try {
         $page === 'files'                                     => FilesController::index(),
         $page === 'upload' && $method === 'POST'             => FilesController::upload(),
         $page === 'upload_chunk' && $method === 'POST'       => FilesController::uploadChunk(),
+        $page === 'upload_status'                             => FilesController::uploadStatus(),
         $page === 'download'                                  => FilesController::download(),
         $page === 'mkdir' && $method === 'POST'              => FilesController::mkdir(),
         $page === 'delete' && $method === 'POST'             => FilesController::delete(),

@@ -92,17 +92,42 @@ final class FilesController
             return;
         }
 
+        // Last chunk: assembling a multi-GB file can take longer than the proxy's response timeout,
+        // so acknowledge receipt immediately and keep assembling after the client connection is closed.
+        echo json_encode(['ok' => true, 'done' => false, 'processing' => true]);
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } else {
+            flush();
+        }
+
         $result = FileManager::assembleChunks($uploadId, $totalChunks, $dir, $filename);
         if ($result['ok']) {
             $user = Auth::user();
             AuditLog::log((int) $user['id'], $user['username'], 'upload', $dir . '/' . $result['name']);
         }
-        echo json_encode([
-            'ok'    => $result['ok'],
-            'done'  => true,
-            'error' => $result['error'] ?? null,
-            'name'  => $result['name'] ?? null,
-        ]);
+    }
+
+    /** Polled by the browser after the last chunk to learn when background assembly finished. */
+    public static function uploadStatus(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        if (!Auth::check()) {
+            http_response_code(401);
+            echo json_encode(['done' => false, 'ok' => false, 'error' => 'Wymagane logowanie.']);
+            return;
+        }
+
+        $uploadId = (string) ($_GET['upload_id'] ?? '');
+        if (!FileManager::isValidUploadId($uploadId)) {
+            http_response_code(400);
+            echo json_encode(['done' => false, 'ok' => false, 'error' => 'Nieprawidłowe żądanie.']);
+            return;
+        }
+
+        $status = FileManager::readStatus($uploadId);
+        echo json_encode($status ?? ['done' => false]);
     }
 
     private static function breadcrumbs(string $dir): array
